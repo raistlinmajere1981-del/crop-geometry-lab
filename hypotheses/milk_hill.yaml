@@ -1,0 +1,75 @@
+id: milk-hill-galaxy-spiral-2001
+title: Milk Hill Galaxy Spiral 2001
+status: geometric_measurement_only
+
+image:
+  bundled_path: raw/milk_hill_01.jpg
+  expected_format: jpg
+  notes:
+    - Original provenance and physical scale must be recorded separately before metric claims.
+    - Pixel coordinates remain the authoritative unit until a ground-scale reference is supplied.
+
+workflow:
+  preprocessing:
+    non_destructive: true
+    source_coordinates_authoritative: true
+    profile: preprocess_profile.json
+    super_resolution: false
+    tramline_policy: exclusion_mask_only
+    perspective_suggestions_require_user_approval: true
+    supported_steps:
+      - analysis_polygon
+      - editable_exclusion_brush
+      - manual_reference_quad
+      - field_track_suggestion
+      - lab_illumination_correction
+      - clahe
+      - color_sample_probability
+      - tramline_exclusion
+  perspective:
+    required: user_decision
+    supported_methods:
+      - reference_quad
+      - field_tracks
+  detection:
+    satellite_standard_methods_by_size:
+      small: log_dog_blob
+      medium: contour_analysis
+      large: hough_and_ellipse_fit
+    main_arm_variable_size:
+      independent_from_satellite_standards: true
+      methods:
+        - contour_analysis
+        - hough_circle
+        - ellipse_fit
+      sampled_satellite_ranges_excluded: true
+    optional_touching_region_split: distance_transform_watershed
+    overlapping_tiles: true
+    fusion: center_and_radius_proximity
+    result_role: editable_candidates
+    manual_overrides_take_precedence: true
+    locked_circles_are_immutable: true
+  coordinate_systems:
+    - processed_image_pixels
+    - original_source_pixels
+  confidence_components:
+    - edge_score
+    - color_score
+    - circularity_score
+    - detector_agreement
+    - symmetry_support
+    - final_confidence
+  polar_angle:
+    zero_direction: east
+    positive_direction: counter_clockwise
+  sixfold_rotations_degrees: [60, 120, 180, 240, 300]
+  arm_count: 6
+
+claims_not_made:
+  - absolute_ground_dimensions_without_scale
+  - physical_causation
+  - torus_interpretation
+
+torus_models:
+  enabled: false
+  reason: First release is limited to reviewed geometric measurements and sixfold symmetry errors.

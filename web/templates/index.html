@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Crop Geometry Lab</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><circle cx=%2216%22 cy=%2216%22 r=%2212%22 fill=%22none%22 stroke=%22%23c8f06b%22 stroke-width=%223%22/></svg>">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=static_version) }}">
+    <script defer src="{{ url_for('static', filename='app.js', v=static_version) }}"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Crop Geometry Lab</h1>
+        <p>İnsan denetimli hava fotoğrafı geometrisi</p>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">Görüntü bekleniyor</div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel pipeline-panel">
+        <div class="workspace-switch" role="tablist" aria-label="Çalışma alanı">
+          <button class="workspace-tab active" data-workspace="preprocess" role="tab">Ön İşleme</button>
+          <button class="workspace-tab" data-workspace="measure" role="tab">Daireler ve Ölçüm</button>
+        </div>
+
+        <section class="always-section">
+          <div class="section-heading">
+            <span class="step-number">1</span>
+            <div>
+              <h2>Görüntü</h2>
+              <p>JPG, PNG veya WebP · en çok 40 MB</p>
+            </div>
+          </div>
+          <label class="button primary file-button">
+            Görüntü yükle
+            <input id="fileInput" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+          </label>
+          {% if sample_available %}
+          <button id="sampleButton" class="button secondary full">Milk Hill 2001 örneğini aç</button>
+          {% endif %}
+          {% if preprocess_sample_available %}
+          <button id="preprocessSampleButton" class="button ghost full">Sentetik ön işleme örneğini aç</button>
+          {% endif %}
+          <div id="imageInfo" class="info-box muted">Henüz görüntü açılmadı.</div>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">2</span>
+            <div>
+              <h2>Analiz bölgesi ve dışlama</h2>
+              <p>Kaynak koordinatlarında çokgen ve fırça maskesi</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="roiPolygon">Çokgen çiz</button>
+            <button id="clearRoi" class="button ghost">Çokgeni sil</button>
+          </div>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="maskPaint">Maske boya</button>
+            <button class="button secondary tool-shortcut" data-activate-tool="maskErase">Maske sil</button>
+          </div>
+          <label>
+            Fırça yarıçapı: <output id="brushRadiusReadout">16 px</output>
+            <input id="brushRadius" type="range" min="2" max="80" value="16" step="1">
+          </label>
+          <div class="layer-toggles">
+            <label class="check"><input id="showExclusionMask" type="checkbox" checked> Maskeyi göster</label>
+            <label class="check"><input id="showRoi" type="checkbox" checked> ROI göster</label>
+          </div>
+          <label>
+            Maske opaklığı: <output id="maskOpacityReadout">45%</output>
+            <input id="maskOpacity" type="range" min="0" max="100" value="45" step="1">
+          </label>
+          <div class="button-row">
+            <button id="undoPreprocess" class="button ghost">Geri al</button>
+            <button id="clearExclusionMask" class="button ghost">Maskeyi temizle</button>
+          </div>
+          <p id="maskStats" class="hint">ROI yok · 0 fırça darbesi</p>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">3</span>
+            <div>
+              <h2>Perspektif</h2>
+              <p>Manuel dört nokta veya onaylı tarla izi önerisi</p>
+            </div>
+          </div>
+          <label>
+            Seçim yöntemi
+            <select id="perspectiveMode">
+              <option value="reference_quad">Dört referans köşesi</option>
+              <option value="field_tracks">İki paralel tarla izi</option>
+            </select>
+          </label>
+          <p id="perspectiveHint" class="hint">
+            Dört köşeyi herhangi bir sırayla işaretleyin.
+          </p>
+          <label class="check">
+            <input id="preservePerspectiveFrame" type="checkbox" checked>
+            Tam kaynak görüntüyü koru (kırpma yok)
+          </label>
+          <p class="hint">Düzeltme sonrası oluşan boş köşeler siyah kalır ve analiz maskesinin dışında tutulur.</p>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="perspective">
+              Nokta seç
+            </button>
+            <button id="clearPerspective" class="button ghost">Temizle</button>
+          </div>
+          <button id="applyPerspective" class="button primary full" disabled>
+            Perspektif adımına ekle (<span id="perspectiveCount">0</span>/4)
+          </button>
+          <div class="separator-label">Otomatik öneri</div>
+          <div class="two-columns">
+            <label>
+              Min. iz desteği
+              <input id="tramlineMinLength" type="number" value="0.28" min="0.1" max="0.9" step="0.02">
+            </label>
+            <label>
+              Yön toleransı (°)
+              <input id="tramlineAngleTolerance" type="number" value="9" min="2" max="30" step="1">
+            </label>
+            <label>
+              Beklenen aralık (px)
+              <input id="tramlineExpectedSpacing" type="number" value="0" min="0" max="1000" step="1" placeholder="0 = otomatik">
+            </label>
+            <label>
+              Düzenlilik: <output id="tramlineRegularityReadout">72%</output>
+              <input id="tramlineRegularity" type="range" value="72" min="0" max="100" step="1">
+            </label>
+          </div>
+          <button id="suggestTramlines" class="button secondary full">Paralel tarla izlerini öner</button>
+          <div id="tramlineSuggestionInfo" class="info-box muted">Henüz öneri üretilmedi.</div>
+          <div class="button-row tramline-editor-actions">
+            <button class="button secondary tool-shortcut" data-activate-tool="tramlineEdit">Seç / düzelt</button>
+            <button class="button secondary tool-shortcut" data-activate-tool="tramlineAdd">İz ekle</button>
+            <button class="button danger tool-shortcut" data-activate-tool="tramlineDelete">İz sil</button>
+          </div>
+          <div class="button-row">
+            <button id="undoTramlineEdit" class="button ghost" disabled>İz değişikliğini geri al</button>
+            <button id="parallelizeTramlines" class="button ghost" disabled>Tümünü paralelleştir</button>
+          </div>
+          <p id="selectedTramlineReadout" class="hint">Bir öneri üretin; sonra çizgiyi veya uç tutamaçlarını sürükleyin.</p>
+          <button id="approvePerspectiveSuggestion" class="button primary full" disabled>Önerilen perspektifi onayla</button>
+        </section>
+
+        <section id="perspectiveQualityPanel" class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">Q</span>
+            <div>
+              <h2>Perspektif Kalitesi</h2>
+              <p>Kaynak ve düzeltilmiş geometriyi salt-okunur karşılaştırır</p>
+            </div>
+          </div>
+          <div class="quality-summary-card">
+            <div class="quality-score-block">
+              <output id="perspectiveQualityScore">—</output>
+              <span>/ 100</span>
+            </div>
+            <div class="quality-summary-fields">
+              <div><span>Yöntem</span><strong id="qualityMethod">none</strong></div>
+              <div><span>Durum</span><strong id="qualityStatus">uygulanmadı</strong></div>
+              <div><span>Kazanç</span><strong id="qualityGain">—</strong></div>
+              <div><span>Güven</span><strong id="qualityConfidence">düşük</strong></div>
+            </div>
+          </div>
+          <p id="qualityInterpretation" class="quality-interpretation muted">
+            Kalite hesabı henüz çalıştırılmadı.
+          </p>
+          <p id="perspectiveMethodGuidance" class="warning-note">
+            Zemindeki aynı düzleme ait anlamlı referanslar seçin.
+          </p>
+
+          <details class="quality-settings">
+            <summary>Puan ağırlıkları</summary>
+            <div class="two-columns quality-weight-grid">
+              <label>Tramline<input id="qualityWeightTramline" type="number" min="0" max="1" step="0.05" value="0.30"></label>
+              <label>Dairesellik<input id="qualityWeightRoundness" type="number" min="0" max="1" step="0.05" value="0.30"></label>
+              <label>Kol simetrisi<input id="qualityWeightArm" type="number" min="0" max="1" step="0.05" value="0.25"></label>
+              <label>K5–K6<input id="qualityWeightK5K6" type="number" min="0" max="1" step="0.05" value="0.10"></label>
+              <label>Warp cezası<input id="qualityWeightWarp" type="number" min="0" max="1" step="0.05" value="0.05"></label>
+            </div>
+            <p class="hint">Ağırlıklar sunucuda toplamı 1 olacak şekilde normalize edilir.</p>
+          </details>
+
+          <label>
+            Dairesellik çalışma kümesi
+            <select id="qualityCircleScope">
+              <option value="all_main">Tüm ana çemberler</option>
+              <option value="largest_18_main">En büyük 18 ana çember</option>
+              <option value="selected">Seçili daireler</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button id="calculatePerspectiveQuality" class="button primary">Kaliteyi hesapla</button>
+            <button id="exportPerspectiveQuality" class="button secondary" disabled>Raporları dışa aktar</button>
+          </div>
+
+          <div class="separator-label">Görsel karşılaştırma</div>
+          <label>
+            İnceleme koordinat uzayı
+            <select id="qualityCoordinateSpace">
+              <option value="source">source</option>
+              <option value="corrected" selected>corrected</option>
+            </select>
+          </label>
+          <div class="quality-view-grid">
+            <button id="qualityViewBefore" class="button ghost" disabled>Önce</button>
+            <button id="qualityViewAfter" class="button ghost" disabled>Sonra</button>
+            <button id="qualityViewSideBySide" class="button ghost" disabled>Yan yana</button>
+            <button id="qualityViewRoundness" class="button ghost" disabled>Elips overlay</button>
+            <button id="qualityViewTramlines" class="button ghost" disabled>Tramline overlay</button>
+            <button id="qualityViewHeatmap" class="button ghost" disabled>Kol ısı haritası</button>
+          </div>
+          <div class="layer-toggles">
+            <label class="check"><input id="showQualityEllipses" type="checkbox"> Düzeltilmiş elipsleri tuvalde göster</label>
+            <label class="check"><input id="showQualityBenefits" type="checkbox"> En çok fayda görenleri işaretle</label>
+          </div>
+
+          <div class="table-scroll quality-table-scroll">
+            <table class="compact-table quality-component-table">
+              <thead>
+                <tr><th>Bileşen</th><th>Önce</th><th>Sonra</th><th>Fark</th><th>Yorum</th></tr>
+              </thead>
+              <tbody id="perspectiveQualityComponents">
+                <tr><td colspan="5" class="muted">Kalite hesabı bekleniyor.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="quality-details">
+            <summary>Ayrıntılı metrikler</summary>
+            <div id="perspectiveQualityMetrics" class="derived-box">
+              <div><span>Tramline açı std.</span><strong>—</strong></div>
+              <div><span>Elips oranı ort.</span><strong>—</strong></div>
+              <div><span>Warp penalty</span><strong>—</strong></div>
+            </div>
+            <canvas id="k5k6QualityChart" class="quality-mini-chart" width="320" height="130" aria-label="K5 K6 önce sonra fark çizgi grafiği"></canvas>
+          </details>
+
+          <div id="selectedCircleQuality" class="info-box muted">
+            Bir ana çembere tıklayın; source/corrected elips oranı ve yerel artık burada gösterilir.
+          </div>
+          <div id="perspectiveQualityDownloads" class="downloads artifact-downloads hidden"></div>
+          <p class="warning-note">
+            Bu katman anotasyonları taşımaz, yeniden etiketlemez veya S sapması düzeltmesi uygulamaz.
+          </p>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">4</span>
+            <div>
+              <h2>LAB aydınlatma</h2>
+              <p>Yalnızca L kanalı; yeni ayrıntı üretilmez</p>
+            </div>
+          </div>
+          <label class="check"><input id="illuminationEnabled" type="checkbox"> Büyük ölçekli arka plan düzeltmesi</label>
+          <div class="two-columns">
+            <label>
+              Yöntem
+              <select id="illuminationMethod">
+                <option value="subtract">Arka plan çıkarma</option>
+                <option value="divide">Arka plana bölme</option>
+              </select>
+            </label>
+            <label>
+              Tahmin
+              <select id="illuminationEstimator">
+                <option value="gaussian">Gaussian</option>
+                <option value="morph_open">Morfolojik açma</option>
+              </select>
+            </label>
+            <label>
+              Ölçek (px)
+              <input id="illuminationScale" type="number" value="61" min="3" step="2">
+            </label>
+            <label>
+              Güç
+              <input id="illuminationStrength" type="number" value="1" min="0" max="1" step="0.1">
+            </label>
+          </div>
+          <label class="check"><input id="claheEnabled" type="checkbox"> Ayarlanabilir CLAHE</label>
+          <div class="two-columns">
+            <label>
+              Clip limiti
+              <input id="claheClipLimit" type="number" value="2" min="0.1" max="10" step="0.1">
+            </label>
+            <label>
+              Izgara
+              <input id="claheGridSize" type="number" value="8" min="2" max="32" step="1">
+            </label>
+          </div>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">5</span>
+            <div>
+              <h2>Renk örnekleri</h2>
+              <p>LAB renk modeli için kullanıcı boyamaları</p>
+            </div>
+          </div>
+          <label>
+            Boyanacak sınıf
+            <select id="sampleClass">
+              <option value="flattened_crop">flattened_crop</option>
+              <option value="standing_crop">standing_crop</option>
+              <option value="tramline">tramline</option>
+              <option value="shadow">shadow</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="samplePaint">Örnek boya</button>
+            <button id="clearColorSamples" class="button ghost">Örnekleri sil</button>
+          </div>
+          <div id="sampleStats" class="sample-stats">
+            <span class="sample-flat">F 0</span>
+            <span class="sample-standing">S 0</span>
+            <span class="sample-tramline">T 0</span>
+            <span class="sample-shadow">G 0</span>
+          </div>
+          <p class="hint">Olasılık haritası yalnızca boyadığınız renk dağılımlarından hesaplanır.</p>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">6</span>
+            <div>
+              <h2>Tarla izi maskesi</h2>
+              <p>Hough Line önerisi; piksel silme ve inpaint yok</p>
+            </div>
+          </div>
+          <label>
+            Öneri maske genişliği
+            <input id="tramlineMaskWidth" type="number" value="7" min="1" max="80" step="1">
+          </label>
+          <div class="layer-toggles">
+            <label class="check"><input id="showTramlines" type="checkbox" checked> Öneriyi göster</label>
+            <label class="check"><input id="tramlineMaskEnabled" type="checkbox"> Dışlama maskesine kat</label>
+          </div>
+          <button id="acceptTramlineMask" class="button secondary full" disabled>Önerilen izleri maske olarak kullan</button>
+          <p class="warning-note">Tarla izleri ölçüm görüntüsünden kaldırılmaz; yalnızca algılama dışlama maskesine eklenir.</p>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">7</span>
+            <div>
+              <h2>Yan daire boy standartları</h2>
+              <p>Üç ortak yan boyu; ana kol aşağıda bağımsızdır</p>
+            </div>
+          </div>
+          <label>
+            Yan örnek sınıfı
+            <select id="sizeSampleClass">
+              <option value="small">Yan küçük · LoG/DoG</option>
+              <option value="medium">Yan orta · kontur</option>
+              <option value="large">Yan büyük · Hough/ellipse</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="sizeSample">Yan örnek seç</button>
+            <button id="clearSizeSamples" class="button ghost">Yan örnekleri sil</button>
+          </div>
+          <div class="size-grid">
+            <span>Yan küçük</span><input id="smallMinRadius" type="number" value="2" min="1"><input id="smallMaxRadius" type="number" value="10" min="2">
+            <span>Yan orta</span><input id="mediumMinRadius" type="number" value="8" min="1"><input id="mediumMaxRadius" type="number" value="28" min="2">
+            <span>Yan büyük</span><input id="largeMinRadius" type="number" value="24" min="1"><input id="largeMaxRadius" type="number" value="100" min="2">
+          </div>
+          <p class="hint">Çizilmiş yan örnekler varsa bu üç satır yerine örneklerden türetilen etkin aralıklar kullanılır.</p>
+          <div class="separator-label">Ana kol · değişken çap</div>
+          <label class="check">
+            <input id="mainArmEnabled" type="checkbox" checked>
+            Standart yan boylarından bağımsız ana kol geçişi
+          </label>
+          <div class="two-columns">
+            <label>
+              Ana min. yarıçap
+              <input id="mainArmMinRadius" type="number" value="10" min="1" step="0.5">
+            </label>
+            <label>
+              Ana maks. yarıçap
+              <input id="mainArmMaxRadius" type="number" value="48" min="2" step="0.5">
+            </label>
+          </div>
+          <div class="two-columns">
+            <label>
+              Ana min. güven
+              <input id="mainArmMinConfidence" type="number" value="0.50" min="0" max="1" step="0.01">
+            </label>
+            <label>
+              Ana Hough eşiği
+              <input id="mainArmHoughThreshold" type="number" value="48" min="10" max="100" step="1">
+            </label>
+          </div>
+          <p class="hint">Ana min–maks değerleri işlenmiş görüntü pikselidir; yan örnek aralıklarına giren yarıçaplar bu geçişte atlanır.</p>
+          <label class="check"><input id="watershedEnabled" type="checkbox"> Temas eden bölgeleri watershed ile ayır</label>
+          <div class="two-columns">
+            <label>
+              Tile boyutu
+              <input id="tileSize" type="number" value="512" min="128" step="64">
+            </label>
+            <label>
+              Örtüşme
+              <input id="tileOverlap" type="number" value="0.2" min="0" max="0.45" step="0.05">
+            </label>
+          </div>
+        </section>
+
+        <section class="preprocess-section">
+          <div class="section-heading">
+            <span class="step-number">8</span>
+            <div>
+              <h2>İşlem yığını</h2>
+              <p>Kaynak değişmez; adımlar açılıp kapatılabilir</p>
+            </div>
+          </div>
+          <button id="applyPreprocessButton" class="button primary full">Ön işlemeyi uygula</button>
+          <div class="button-row">
+            <button id="resetPreprocess" class="button ghost">Sıfırla</button>
+            <button id="saveProfile" class="button secondary">Profili kaydet</button>
+          </div>
+          <label class="button ghost file-button full">
+            Profil yükle
+            <input id="profileInput" type="file" accept=".json,application/json">
+          </label>
+          <div id="profileDownload" class="downloads hidden"></div>
+          <button id="exportPreprocessButton" class="button secondary full">Ara PNG çıktılarını hazırla</button>
+          <div id="preprocessDownloads" class="downloads artifact-downloads hidden"></div>
+          <p class="warning-note">Super-resolution yoktur. Tuval yakınlaştırması yalnızca görüntüleme dönüşümüdür.</p>
+        </section>
+
+        <section class="measure-section hidden">
+          <div class="section-heading">
+            <span class="step-number">1</span>
+            <div>
+              <h2>Çok ölçekli adaylar</h2>
+              <p>Üç yan standardı + değişken çaplı ana kol</p>
+            </div>
+          </div>
+          <div class="two-columns">
+            <label>
+              Min. son güven
+              <input id="minFinalConfidence" type="number" value="0.50" min="0" max="1" step="0.01" inputmode="decimal">
+            </label>
+            <label>
+              En çok aday
+              <input id="maxCandidates" type="number" value="500" min="1" max="1500" step="50">
+            </label>
+          </div>
+          <input id="minRadius" type="hidden" value="4">
+          <input id="maxRadius" type="hidden" value="80">
+          <input id="minDistance" type="hidden" value="10">
+          <input id="minCircularity" type="hidden" value="0.38">
+          <button id="detectButton" class="button primary full">Çok ölçekli daire adaylarını bul</button>
+          <p id="detectionRangeReadout" class="hint">Etkin üç yan standardı ve bağımsız ana kol aralığı algılamadan sonra burada gösterilir.</p>
+          <button id="inspectWeakCircle" class="button ghost full">En düşük görsel destekli adayı incele</button>
+          <p id="weakCircleReadout" class="hint">Yalnızca seçim ve yakınlaştırma yapar; otomatik silmez.</p>
+          <p class="warning-note">Kilitli ve manuel daireler sonraki turlarda değiştirilmez. Otomatik sonuç yine insan denetimi gerektirir.</p>
+        </section>
+
+        <section class="measure-section hidden">
+          <div class="section-heading">
+            <span class="step-number">2</span>
+            <div>
+              <h2>Altılı analiz</h2>
+              <p>Genel merkez ve kol fazı</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="button secondary tool-shortcut" data-activate-tool="center">Merkez seç</button>
+            <span id="centerReadout" class="coordinate-readout">—</span>
+          </div>
+          <label>
+            1. kol yönü / faz (derece)
+            <input id="phaseDegrees" type="number" value="0" step="0.5">
+          </label>
+          <div class="two-columns">
+            <label>
+              Kol modeli
+              <select id="armModel">
+                <option value="radial">Düz / radyal</option>
+                <option value="spiral">Spiral</option>
+              </select>
+            </label>
+            <label>
+              Dönüş (° / 100 px)
+              <input id="armTwist" type="number" value="0" min="-360" max="360" step="0.5" disabled>
+            </label>
+          </div>
+          <button id="suggestArmModel" class="button secondary full">
+            Spiral uyumunu öner
+          </button>
+          <button id="applyArmSuggestion" class="button ghost full hidden">
+            Öneriyi uygula
+          </button>
+          <p id="armFitReadout" class="hint">Öneri uygulanmadan önce kullanıcı onayı gerekir.</p>
+          <button id="analyzeButton" class="button primary full">Kolları ve simetriyi hesapla</button>
+          <button id="reindexArmsButton" class="button ghost full">Kol sıralarını 1…N yeniden numarala</button>
+          <p class="hint">Bir dairenin kol alanını elle değiştirirseniz bu atama sonraki analizlerde kilitli kalır.</p>
+          <div class="layer-toggles">
+            <label class="check"><input id="showArms" type="checkbox" checked> Altı kol katmanı</label>
+            <label class="check"><input id="showLabels" type="checkbox"> Etiketler</label>
+          </div>
+          <div id="symmetrySummary" class="summary-grid hidden"></div>
+          <details id="symmetryDetails" class="symmetry-details hidden">
+            <summary>Dönüş hata tablosu</summary>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Dönüş</th><th>Görüntü MAE</th><th>Korelasyon</th><th>Geometri</th></tr></thead>
+                <tbody id="symmetryRows"></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section class="measure-section hidden">
+          <div class="section-heading">
+            <span class="step-number">3</span>
+            <div>
+              <h2>Kol Denetimi</h2>
+              <p>Öneri ile kullanıcı onayını ayıran yapısal çalışma alanı</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="refreshStructureButton" class="button primary">Denetimi yenile</button>
+            <button id="undoStructureButton" class="button ghost" disabled>Yapısal geri al</button>
+            <button id="clearAllCircleLocks" class="button danger" disabled>Tüm kilitleri aç</button>
+          </div>
+          <p id="structureLockSummary" class="hint">Kilit durumu hesaplanıyor…</p>
+          <p class="warning-note">68/13/55 ve toplam 409 yalnız doğrulama hedefidir; hedef için otomatik taşıma, silme veya çoğaltma yapılmaz.</p>
+
+          <details class="structure-section" open>
+            <summary>Kol özeti</summary>
+            <div class="table-scroll">
+              <table class="compact-table structure-summary-table">
+                <thead><tr><th>Kol</th><th>Toplam</th><th>Ana</th><th>Yan</th><th>Sınıfsız</th><th>Hedef farkı</th></tr></thead>
+                <tbody id="structureSummaryBody"></tbody>
+              </table>
+            </div>
+            <div class="structure-totals">
+              <div><span>Merkez</span><strong id="structureCenterCount">—</strong></div>
+              <div><span>Genel toplam</span><strong id="structureTotalCount">—</strong></div>
+              <div><span>Beklenen</span><strong>409</strong></div>
+              <div><span>Fazla / eksik</span><strong id="structureTotalDifference">—</strong></div>
+            </div>
+            <div id="centerCandidateBox" class="info-box muted">Denetim yenilendiğinde merkez adayı burada gösterilir.</div>
+            <button id="approveCenterCandidate" class="button secondary full" disabled>Merkez adayını onayla</button>
+          </details>
+
+          <details class="structure-section" open>
+            <summary>Kol sınırı adayları · K1 ↔ K6</summary>
+            <div class="layer-toggles">
+              <label class="check"><input id="boundaryTopFourOnly" type="checkbox"> En olası dört aday</label>
+              <label class="check"><input id="boundarySelectAll" type="checkbox"> Uygun görünenlerin tümünü seç</label>
+            </div>
+            <div class="table-scroll structure-table-scroll">
+              <table class="compact-table">
+                <thead><tr><th></th><th>Kimlik</th><th>Mevcut</th><th>Öneri</th><th>Mevcut uzaklık</th><th>Öneri uzaklığı</th><th>Fark</th><th>Kilit</th></tr></thead>
+                <tbody id="boundaryCandidatesBody"></tbody>
+              </table>
+            </div>
+            <button id="applySelectedBoundary" class="button secondary full" disabled>Seçili kol aktarımlarını onayla</button>
+            <p class="hint">Pozitif fark önerilen kolun geometrik olarak daha yakın olduğunu gösterir. Kilitli `arm_id` alanları toplu işlemle değiştirilmez.</p>
+          </details>
+
+          <details class="structure-section" open>
+            <summary>Yerel taraf otomatik önerileri</summary>
+            <div class="structure-totals local-side-totals">
+              <div><span>Kapsam</span><strong id="localSideCoverage">—</strong></div>
+              <div><span>Seçili</span><strong id="localSideSelectionCount">0</strong></div>
+              <div><span>Kilitli</span><strong id="localSideLockedCount">—</strong></div>
+              <div><span>Düşük güven</span><strong id="localSideLowConfidenceCount">—</strong></div>
+            </div>
+            <div id="localSideDistribution" class="info-box muted">Denetim yenilendiğinde İç / Dış / Kol ekseni dağılımı burada gösterilir.</div>
+            <div class="two-columns">
+              <label>
+                Kol
+                <select id="localSideArmFilter">
+                  <option value="all">Tüm kollar</option>
+                  <option value="1">K1</option><option value="2">K2</option><option value="3">K3</option>
+                  <option value="4">K4</option><option value="5">K5</option><option value="6">K6</option>
+                  <option value="center">Merkez / kolsuz</option>
+                </select>
+              </label>
+              <label>
+                Öneri
+                <select id="localSideTypeFilter">
+                  <option value="all">Tüm tipler</option>
+                  <option value="inner">İç</option>
+                  <option value="outer">Dış</option>
+                  <option value="centerline">Kol ekseni</option>
+                  <option value="center">Merkez</option>
+                  <option value="unknown">Bilinmiyor</option>
+                </select>
+              </label>
+            </div>
+            <div class="layer-toggles">
+              <label class="check"><input id="localSideOnlyChanged" type="checkbox"> Yalnız mevcut değerden farklı</label>
+              <label class="check"><input id="localSideOnlyLowConfidence" type="checkbox"> Yalnız eşik altı / bilinmiyor</label>
+              <label>
+                Toplu seçim güven eşiği
+                <input id="localSideMinConfidence" type="number" min="0" max="1" step="0.05" value="0.60">
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="selectSafeLocalSides" class="button ghost">Listelenen güvenli önerileri seç</button>
+              <button id="clearLocalSideSelection" class="button ghost">Seçimi temizle</button>
+            </div>
+            <div class="table-scroll structure-table-scroll local-side-table-scroll">
+              <table class="compact-table">
+                <thead><tr><th></th><th>Kimlik</th><th>Kol</th><th>Mevcut</th><th>Öneri</th><th>Eksen uzaklığı</th><th>Radyal fark</th><th>Teğet</th><th>Kaynak</th><th>Güven</th><th>Kilit</th></tr></thead>
+                <tbody id="localSideCandidatesBody"></tbody>
+              </table>
+            </div>
+            <button id="applySelectedLocalSides" class="button secondary full" disabled>Seçili yerel tarafları onayla ve kilitle</button>
+            <p id="localSideMethodNote" class="hint">Onaylı Ana Zincir varsa o geometri, yoksa mevcut spiral kol modeli kullanılır. `left/right` silinmez; `legacy_side` içinde korunur.</p>
+          </details>
+
+          <details class="structure-section" open>
+            <summary>Ana Zincir</summary>
+            <div class="two-columns">
+              <label>
+                Kol
+                <select id="mainChainArm">
+                  <option value="1">K1</option><option value="2">K2</option><option value="3">K3</option>
+                  <option value="4">K4</option><option value="5">K5</option><option value="6">K6</option>
+                </select>
+              </label>
+              <div class="chain-counter"><span>Seçim</span><strong id="mainChainReadout">0 / 13</strong></div>
+            </div>
+            <div class="button-row">
+              <button id="startMainChain" class="button secondary">Zincir taslağını aç</button>
+              <button id="cancelMainChain" class="button ghost" disabled>İptal</button>
+            </div>
+            <ol id="mainChainList" class="main-chain-list">
+              <li class="muted">Bir kol seçip taslağı açın; merkezden dışa dairelere tıklayın.</li>
+            </ol>
+            <button id="confirmMainChain" class="button primary full" disabled>13 ana çemberi onayla</button>
+            <p class="hint">Eski otomatik `sequence_index` içe alınmaz. Onayda sıra 1…13 üretilir; aynı daire iki zincirde kullanılamaz.</p>
+          </details>
+
+          <details class="structure-section">
+            <summary>Yan çember eşleme</summary>
+            <div class="button-row">
+              <button id="selectAllSatelliteSuggestions" class="button ghost">Listelenenleri seç</button>
+              <button id="applySelectedSatellites" class="button secondary" disabled>Seçili eşlemeleri onayla</button>
+            </div>
+            <div class="table-scroll structure-table-scroll">
+              <table class="compact-table">
+                <thead><tr><th></th><th>Yan kimlik</th><th>En yakın ana</th><th>İkinci ana</th><th>Oran</th><th>Norm. uzaklık</th><th>Yerel açı</th><th>Taraf</th><th>Güven</th></tr></thead>
+                <tbody id="satelliteCandidatesBody"></tbody>
+              </table>
+            </div>
+            <div id="selectedRelationships" class="info-box muted">Bir ana veya yan çember seçildiğinde bağlantıları burada görünür.</div>
+            <button id="unlinkSelectedParent" class="button ghost full" disabled>Seçili yan çember bağlantısını kaldır</button>
+          </details>
+
+          <details class="structure-section">
+            <summary>Yan çember durum tablosu</summary>
+            <label>
+              Görüntülenecek kol
+              <select id="satelliteTableArm">
+                <option value="1">K1</option><option value="2">K2</option><option value="3">K3</option>
+                <option value="4">K4</option><option value="5">K5</option><option value="6">K6</option>
+              </select>
+            </label>
+            <div class="table-scroll structure-table-scroll">
+              <table class="compact-table">
+                <thead><tr><th>Ana sıra</th><th>Ana yarıçap</th><th>İç yan</th><th>Dış yan</th><th>Toplam</th><th>İç açı</th><th>Dış açı</th></tr></thead>
+                <tbody id="satelliteStatusBody"></tbody>
+              </table>
+            </div>
+            <p class="warning-note">Uyarı hipotezi: temel yan adet dizisi adayı <code>1,2,2,2,3,3,3,3,3,2,2,2,1</code>; 6. konumda bir taraftaki üçlü grup eksik olabilir. Bu dizi veriye uygulanmaz.</p>
+          </details>
+
+          <details class="structure-section">
+            <summary>Çakışan ve mükerrer adaylar</summary>
+            <div class="table-scroll structure-table-scroll">
+              <table class="compact-table">
+                <thead><tr><th>Kimlik A</th><th>Kimlik B</th><th>Merkez farkı</th><th>Yarıçap farkı</th><th>Örtüşme</th><th>Kaynak</th><th>Öncelik</th><th></th></tr></thead>
+                <tbody id="duplicateCandidatesBody"></tbody>
+              </table>
+            </div>
+            <p class="hint">Birleştirme yalnız satırdaki açık onayla yapılır; manuel düzenlenmiş veya kilitli kayıt korunur.</p>
+          </details>
+
+          <details class="structure-section">
+            <summary>Görünüm filtreleri</summary>
+            <div class="filter-grid">
+              <label class="check"><input id="filterUnclassified" type="checkbox"> Yalnız sınıflandırılmamış</label>
+              <label class="check"><input id="filterMain" type="checkbox"> Yalnız ana çemberler</label>
+              <label class="check"><input id="filterSatellite" type="checkbox"> Yalnız yan çemberler</label>
+              <label class="check"><input id="filterCenter" type="checkbox"> Yalnız merkez</label>
+              <label class="check"><input id="filterSelectedArm" type="checkbox"> Yalnız seçilen kol</label>
+              <label class="check"><input id="filterBoundary" type="checkbox"> Yalnız kol sınırı adayları</label>
+              <label class="check"><input id="filterMissingParent" type="checkbox"> Yalnız parent_id olmayan yan çemberler</label>
+              <label class="check"><input id="filterDuplicates" type="checkbox"> Yalnız mükerrer adaylar</label>
+              <label class="check"><input id="filterLowConfidence" type="checkbox"> Yalnız düşük güvenli çemberler</label>
+              <label class="check"><input id="filterManual" type="checkbox"> Yalnız manuel düzenlenenler</label>
+            </div>
+            <label>
+              Kimlik etiketleri
+              <select id="labelMode">
+                <option value="selected" selected>Yalnız kimliği seçilince etiketi göster</option>
+                <option value="none">Etiketleri gizle</option>
+                <option value="all">Bütün etiketleri göster</option>
+              </select>
+            </label>
+            <button id="clearStructureFilters" class="button ghost full">Filtreleri temizle</button>
+          </details>
+
+          <details class="structure-section">
+            <summary>Düzenleme günlüğü</summary>
+            <div id="editHistoryList" class="edit-history-list"><p class="muted">Henüz yapısal değişiklik yok.</p></div>
+          </details>
+        </section>
+
+        <section class="measure-section hidden">
+          <div class="section-heading">
+            <span class="step-number">4</span>
+            <div>
+              <h2>Çalışma ve dışa aktar</h2>
+              <p>Yapı, kilit ve düzenleme günlüğünü kaydet ve geri yükle</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="saveProjectButton" class="button secondary">Çalışmayı kaydet</button>
+            <label class="button secondary file-button">
+              Çalışma JSON'u yükle
+              <input id="projectInput" type="file" accept=".json,application/json">
+            </label>
+          </div>
+          <div id="projectDownload" class="downloads hidden"></div>
+          <p class="hint">Geri yüklemeden önce aynı kaynak görüntüyü açın.</p>
+          <button id="exportButton" class="button primary full">PNG + JSON + yapısal CSV’leri hazırla</button>
+          <div id="downloads" class="downloads hidden"></div>
+        </section>
+      </aside>
+
+      <section class="canvas-column">
+        <div class="canvas-toolbar" role="toolbar" aria-label="Düzenleme araçları">
+          <button class="tool measure-tool hidden" data-tool="select" title="Seç / taşı / yeniden boyutlandır (V)">Seç</button>
+          <button class="tool" data-tool="pan" title="Kaydır (H veya boşluk)">Kaydır</button>
+          <button class="tool measure-tool hidden" data-tool="add" title="Daire ekle (A)">Daire ekle</button>
+          <button class="tool measure-tool hidden" data-tool="delete" title="Daire sil (D)">Daire sil</button>
+          <button class="tool measure-tool hidden" data-tool="center" title="Genel merkez seç (C)">Merkez</button>
+          <button class="tool measure-tool hidden" data-tool="mainChain" title="Ana zincir için sırayla daire seç">Ana Zincir</button>
+          <button class="tool preprocess-tool" data-tool="roiPolygon">ROI çokgeni</button>
+          <button class="tool preprocess-tool" data-tool="maskPaint">Maske boya</button>
+          <button class="tool preprocess-tool" data-tool="maskErase">Maske sil</button>
+          <button class="tool preprocess-tool" data-tool="samplePaint">Renk örneği</button>
+          <button class="tool preprocess-tool" data-tool="sizeSample">Boyut örneği</button>
+          <button class="tool preprocess-tool" data-tool="perspective" title="Perspektif noktaları (P)">Perspektif</button>
+          <button class="tool preprocess-tool" data-tool="tramlineEdit" title="Tarla izini seç / taşı / uçlarını düzelt (I)">İz düzelt</button>
+          <button class="tool preprocess-tool" data-tool="tramlineAdd" title="Yeni tarla izi çiz (Shift+I)">İz ekle</button>
+          <button class="tool preprocess-tool" data-tool="tramlineDelete" title="Tarla izini sil">İz sil</button>
+          <span class="toolbar-separator"></span>
+          <button id="fitButton" class="tool" title="Görüntüyü sığdır (F)">Sığdır</button>
+          <span id="zoomReadout" class="zoom-readout">100%</span>
+        </div>
+        <div id="canvasWrap" class="canvas-wrap">
+          <canvas id="analysisCanvas" aria-label="Etkileşimli analiz tuvali"></canvas>
+          <div id="stepPreview" class="step-preview hidden">
+            <img id="stepPreviewImage" alt="İşlem öncesi veya sonrası görünüm">
+            <div class="step-preview-bar">
+              <span id="stepPreviewLabel">Adım görünümü</span>
+              <button id="closeStepPreview" class="button ghost">Çalışma görünümüne dön</button>
+            </div>
+          </div>
+          <div id="emptyState" class="empty-state">
+            <div class="empty-mark">◎</div>
+            <h2>Bir hava fotoğrafı açın</h2>
+            <p>Fare tekerleğiyle yakınlaştırın; boşluk + sürükleme ile kaydırın.</p>
+          </div>
+          <div id="busyOverlay" class="busy-overlay hidden">
+            <div class="spinner"></div>
+            <span id="busyText">İşleniyor…</span>
+          </div>
+          <div class="legend" id="armLegend">
+            <span><i class="arm-1"></i>K1</span>
+            <span><i class="arm-2"></i>K2</span>
+            <span><i class="arm-3"></i>K3</span>
+            <span><i class="arm-4"></i>K4</span>
+            <span><i class="arm-5"></i>K5</span>
+            <span><i class="arm-6"></i>K6</span>
+          </div>
+          <div id="preprocessLegend" class="legend preprocess-legend">
+            <span><i class="sample-flat"></i>flattened</span>
+            <span><i class="sample-standing"></i>standing</span>
+            <span><i class="sample-tramline"></i>tramline</span>
+            <span><i class="sample-shadow"></i>shadow</span>
+          </div>
+          <div id="cursorReadout" class="cursor-readout">x — · y —</div>
+        </div>
+        <footer class="canvas-footer">
+          <span id="toolHint">Seçili daireyi merkezinden taşıyın veya çemberinden sürükleyerek yarıçapını değiştirin.</span>
+          <span id="circleCount">0 daire</span>
+        </footer>
+      </section>
+
+      <aside class="panel inspector-panel">
+        <div id="preprocessInspector">
+          <div class="section-heading inspector-title">
+            <div>
+              <h2>Non-destructive işlem yığını</h2>
+              <p>Her adımı açın, kapatın veya öncesi/sonrası olarak inceleyin</p>
+            </div>
+          </div>
+          <div id="operationStack" class="operation-stack">
+            <div class="empty-stack">Ön işlemeyi uyguladığınızda adımlar burada görünür.</div>
+          </div>
+          <div class="derived-box">
+            <div><span>Koordinat uzayı</span><strong>source → processed</strong></div>
+            <div><span>Geometri</span><strong id="transformState">özdeşlik</strong></div>
+            <div><span>Ölçek büyütme</span><strong>kapalı</strong></div>
+            <div><span>Tramline inpaint</span><strong>kapalı</strong></div>
+          </div>
+          <div id="artifactPreviewButtons" class="artifact-preview-grid hidden"></div>
+          <div class="inspector-help">
+            <h3>Çalışma ilkesi</h3>
+            <p>Kaynak görüntü hiçbir adımda üzerine yazılmaz. Maskeler ve örnekler kaynak koordinatlarında saklanır; perspektif görünümüne homografi ile taşınır.</p>
+          </div>
+        </div>
+
+        <div id="circleInspector" class="hidden">
+        <div class="section-heading inspector-title">
+          <div>
+            <h2>Daire özellikleri</h2>
+            <p id="selectionState">Bir daire seçin</p>
+          </div>
+        </div>
+        <form id="circleForm" class="circle-form disabled-form">
+          <label>
+            Kimlik
+            <input data-field="id" type="text" readonly>
+          </label>
+          <div class="two-columns">
+            <label>
+              x
+              <input data-field="x" type="number" step="0.1">
+            </label>
+            <label>
+              y
+              <input data-field="y" type="number" step="0.1">
+            </label>
+            <label>
+              Yarıçap
+              <input data-field="radius" type="number" min="0.1" step="0.1">
+            </label>
+            <label>
+              Güven
+              <input data-field="confidence" type="number" min="0" max="1" step="0.01">
+            </label>
+          </div>
+          <label>
+            Çember türü
+            <select data-field="circle_type">
+              <option value="center">Merkez</option>
+              <option value="main">Ana çember</option>
+              <option value="satellite">Yan çember</option>
+              <option value="unclassified">Sınıflandırılmamış</option>
+              <option value="side">Yan çember (eski kayıt)</option>
+            </select>
+          </label>
+          <label>
+            Üst çember / parent_id
+            <input data-field="parent_id" type="text" list="circleIds" placeholder="Boş bırakılabilir">
+            <datalist id="circleIds"></datalist>
+          </label>
+          <div class="two-columns">
+            <label>
+              Kol / arm_id
+              <select data-field="arm_id">
+                <option value="">—</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </label>
+            <label>
+              Sıra
+              <input data-field="sequence_index" type="number" min="0" step="1">
+            </label>
+          </div>
+          <label>
+            Yerel taraf
+            <select data-field="side">
+              <option value="">—</option>
+              <option value="inner">İç</option>
+              <option value="outer">Dış</option>
+              <option value="centerline">Kol ekseni</option>
+              <option value="unknown">Bilinmiyor</option>
+              <option value="center">Merkez</option>
+              <option value="left">Sol (eski)</option>
+              <option value="right">Sağ (eski)</option>
+            </select>
+          </label>
+          <fieldset class="field-lock-controls">
+            <legend>Alan kilitleri</legend>
+            <div class="filter-grid">
+              <label class="check"><input type="checkbox" data-lock-field="circle_type"> Tür</label>
+              <label class="check"><input type="checkbox" data-lock-field="arm_id"> Kol</label>
+              <label class="check"><input type="checkbox" data-lock-field="sequence_index"> Sıra</label>
+              <label class="check"><input type="checkbox" data-lock-field="parent_id"> Parent</label>
+              <label class="check"><input type="checkbox" data-lock-field="side"> Taraf</label>
+            </div>
+          </fieldset>
+          <fieldset class="appearance-controls">
+            <legend>Çember görünümü</legend>
+            <div class="two-columns">
+              <label>
+                Çizgi rengi
+                <input data-field="stroke_color" type="color" value="#eaf676">
+              </label>
+              <label>
+                Kalınlık (px)
+                <input data-field="stroke_width" type="number" min="0.5" max="20" step="0.5" placeholder="Varsayılan">
+              </label>
+            </div>
+            <label class="check fill-toggle">
+              <input data-field="fill_enabled" type="checkbox">
+              İçini renk ile doldur
+            </label>
+            <div class="two-columns">
+              <label>
+                Dolgu rengi
+                <input data-field="fill_color" data-fill-control type="color" value="#eaf676">
+              </label>
+              <label>
+                Dolgu opaklığı
+                <input data-field="fill_opacity" data-fill-control type="number" min="0" max="1" step="0.05" value="0.20">
+              </label>
+            </div>
+            <button id="resetCircleAppearance" class="button ghost full" type="button">
+              Kol / varsayılan görünümüne dön
+            </button>
+          </fieldset>
+          <label class="check lock-control">
+            <input data-field="locked" type="checkbox">
+            Kullanıcı onaylı · sonraki turlarda kilitle
+          </label>
+          <div class="derived-box">
+            <div><span>Merkez uzaklığı</span><strong data-derived="center_distance">—</strong></div>
+            <div><span>Merkez açısı</span><strong data-derived="center_angle">—</strong></div>
+            <div><span>İşlenmiş x/y</span><strong data-derived="processed_coordinates">—</strong></div>
+            <div><span>Kaynak x/y</span><strong data-derived="source_coordinates">—</strong></div>
+            <div><span>Aktif uzay</span><strong data-derived="coordinate_space">corrected</strong></div>
+            <div><span>Kaynak yarıçap</span><strong data-derived="source_radius">—</strong></div>
+            <div><span>Düzeltilmiş yarıçap</span><strong data-derived="corrected_radius">—</strong></div>
+            <div><span>Kaynak major/minor</span><strong data-derived="source_axes">—</strong></div>
+            <div><span>Düzeltilmiş major/minor</span><strong data-derived="corrected_axes">—</strong></div>
+            <div><span>Boyut / algılayıcı</span><strong data-derived="detector">—</strong></div>
+            <div><span>edge_score</span><strong data-derived="edge_score">—</strong></div>
+            <div><span>color_score</span><strong data-derived="color_score">—</strong></div>
+            <div><span>circularity_score</span><strong data-derived="circularity_score">—</strong></div>
+            <div><span>detector_agreement</span><strong data-derived="detector_agreement">—</strong></div>
+            <div><span>symmetry_support</span><strong data-derived="symmetry_support">—</strong></div>
+            <div><span>final_confidence</span><strong data-derived="final_confidence">—</strong></div>
+            <div><span>Önerilen tür / kol</span><strong data-derived="suggested_classification">—</strong></div>
+            <div><span>Önerilen parent / taraf</span><strong data-derived="suggested_relationship">—</strong></div>
+            <div><span>Yerel açı</span><strong data-derived="local_angle">—</strong></div>
+            <div><span>Norm. parent uzaklığı</span><strong data-derived="normalized_parent_distance">—</strong></div>
+            <div><span>Sınıflandırma kaynağı</span><strong data-derived="classification_source">—</strong></div>
+            <div><span>Kaynak</span><strong data-derived="source">—</strong></div>
+          </div>
+          <button id="deleteSelected" class="button danger full" type="button">Seçili daireyi sil</button>
+        </form>
+        <div class="inspector-help">
+          <h3>Kısa yollar</h3>
+          <dl>
+            <div><dt>V</dt><dd>Seç</dd></div>
+            <div><dt>A</dt><dd>Daire ekle</dd></div>
+            <div><dt>Del</dt><dd>Seçileni sil</dd></div>
+            <div><dt>Boşluk</dt><dd>Geçici kaydır</dd></div>
+            <div><dt>F</dt><dd>Görüntüyü sığdır</dd></div>
+          </dl>
+        </div>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>
